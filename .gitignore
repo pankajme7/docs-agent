@@ -1,0 +1,24 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Generated data and model caches
+data/chroma/
+data/raw/
+data/evaluations/results/*.json
+data/evaluations/results/*.csv
+*.log
+.DS_Store
+Thumbs.db
