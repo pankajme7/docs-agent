@@ -20,28 +20,44 @@ GroundedDocs is a small Python application that answers questions from a curated
 
 ```mermaid
 flowchart TD
-    A[Public Kubernetes docs] --> B[Ingestion and HTML extraction]
-    B --> C[Overlapping word-window chunking]
-    C --> D[Sentence Transformers embeddings]
-    D --> E[(ChromaDB persistent vector store)]
-    Q[User question] --> R[Retriever]
-    E --> R
-    R --> F[Context with source labels]
-    F --> G[LLM adapter]
-    G --> H[Grounded JSON answer or streaming text]
-    H --> I[Sources and run metrics]
-
-    subgraph MCP path
-      Q2[User question] --> L[LLM function calling]
-      L --> M[MCP client: discover tools]
-      M --> N[MCP server: search_docs]
-      N --> R
-      R --> M
-      M --> L
+    subgraph Ingestion["Offline ingestion: grounded-docs ingest"]
+        URLs["Curated Kubernetes URLs<br/>data/sources.yaml"] --> Fetch["HTTP fetch + HTML extraction"]
+        Fetch --> Chunk["Overlapping word-window chunks<br/>145 words, 28-word overlap by default"]
+        Chunk --> DocEmbed["Sentence Transformers<br/>all-MiniLM-L6-v2 (default)"]
+        DocEmbed --> Index[("Persistent ChromaDB<br/>documents + embeddings + source metadata")]
     end
 
-    G --> J[Evaluation and benchmark runner]
+    subgraph Runtime["Runtime: direct RAG and MCP agent"]
+        User["User question"] --> Host["Python CLI / host"]
+
+        Host -->|Direct ask: query| Retriever["Retriever<br/>query embedding + cosine top-k"]
+        Retriever --> QueryEmbed["Same Sentence Transformers model"]
+        QueryEmbed --> Index
+        Index -->|ranked chunks + metadata| Retriever
+        Retriever --> Context["Context assembly<br/>source labels + context limit"]
+        Context -->|grounded prompt| LLM["LLMClient<br/>Ollama qwen3:4b-instruct-2507-q4_K_M<br/>(current .env configuration)"]
+        LLM -->|JSON or streamed text| Answer["Answer with sources<br/>JSON validated by Pydantic"]
+        Answer --> User
+
+        Host -->|MCP agent: list_tools / call_tool| MCPClient["MCP client<br/>discovers tool schema at runtime"]
+        MCPClient <-->|Streamable HTTP<br/>http://127.0.0.1:8000/mcp| MCPServer["MCP server<br/>search_docs(query, top_k)"]
+        MCPServer --> MCPRetriever["Retriever<br/>query embedding + Chroma search"]
+        MCPRetriever --> QueryEmbed
+        Index --> MCPRetriever
+        MCPRetriever -->|ranked chunks + source URLs| MCPServer
+        MCPClient -->|discovered tool schema + tool results| Host
+        Host -->|question + tool schema / tool results| LLM
+        LLM -->|function call / final answer| Host
+        Host --> Answer
+    end
+
+    subgraph Evaluation["Evaluation"]
+        Eval["Evaluation + Ollama benchmark runners"] -->|questions and run settings| Host
+        Answer --> Metrics["Saved answers, token/latency metrics<br/>and evaluation results"]
+    end
 ```
+
+The current `.env` configuration uses Ollama with `qwen3:4b-instruct-2507-q4_K_M` for generation and `sentence-transformers/all-MiniLM-L6-v2` for document and query embeddings. Without provider settings, the code falls back to OpenAI `gpt-4.1-mini`; set `LLM_PROVIDER` and the corresponding model variable to select another provider/model. In the MCP path, the Python host makes the LLM requests and bridges function calls to the MCP client; the MCP server only exposes document search and does not call an LLM.
 
 ## Repository layout
 
